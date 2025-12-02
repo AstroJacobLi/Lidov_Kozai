@@ -2,6 +2,8 @@
 
 A web-based interactive simulator for the Lidov-Kozai mechanism, a dynamical phenomenon in celestial mechanics affecting the orbit of a binary system perturbed by a distant third body.
 
+![Lidov-Kozai Mechanism Simulator Demo](demo.png)
+
 ## Overview
 
 This application visualizes the secular evolution of a hierarchical triple system. It demonstrates how a distant perturber can induce periodic oscillations in the inclination and eccentricity of an inner binary's orbit.
