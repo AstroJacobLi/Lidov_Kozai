@@ -140,7 +140,6 @@
             const [simSpeed, setSimSpeed] = useState(0.05);
             // We use a ref for the loop to access current speed without closure staleness
             const simSpeedRef = useRef(0.05);
-            const isPlayingRef = useRef(false);
 
             const [params, setParams] = useState({
                 inclination: 60,
@@ -193,10 +192,6 @@
             useEffect(() => {
                 simSpeedRef.current = simSpeed;
             }, [simSpeed]);
-
-            useEffect(() => {
-                isPlayingRef.current = isPlaying;
-            }, [isPlaying]);
 
             useEffect(() => {
                 if (!mountRef.current) return;
@@ -335,9 +330,7 @@
                 const animate = () => {
                     reqRef.current = requestAnimationFrame(animate);
 
-                    reqRef.current = requestAnimationFrame(animate);
-
-                    if (isPlayingRef.current) {
+                    if (isPlaying) {
                         const p = physRef.current;
                         
                         // Physics Sub-stepping
@@ -444,21 +437,9 @@
                     }
                     controls.dispose();
                     renderer.dispose();
-                    
-                    // Dispose Geometries & Materials
                     starGeo.dispose(); starMat.dispose();
-                    perturberOrbitGeo.dispose(); perturberOrbitMat.dispose();
-                    perturberGeo.dispose(); perturberMat.dispose();
-                    orbitGeo.dispose(); orbitMat.dispose();
-                    planetGeo.dispose(); planetMat.dispose();
-                    
-                    // Dispose Helpers
-                    gridHelper.geometry.dispose(); gridHelper.material.dispose();
-                    // ArrowHelper consists of line and cone
-                    if (arrowHelper.line) { arrowHelper.line.geometry.dispose(); arrowHelper.line.material.dispose(); }
-                    if (arrowHelper.cone) { arrowHelper.cone.geometry.dispose(); arrowHelper.cone.material.dispose(); }
                 };
-            }, []);
+            }, [isPlaying]);
 
             useEffect(() => {
                 resetSimulation();
