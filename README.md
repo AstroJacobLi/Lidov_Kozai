@@ -41,6 +41,7 @@ $$ L_z = \sqrt{1 - e^2} \cos i \approx \text{const} $$
 When the initial inclination is high enough (specifically $i_0 > \arccos(\sqrt{3/5}) \approx 39.2^\circ$), the system can undergo large oscillations where the orbit becomes very eccentric as the inclination decreases, and circularizes as the inclination increases.
 
 To simulate tidal circularization, an ad-hoc dissipative term is added to the eccentricity evolution:
+
 $$\left(\frac{de}{dt}\right)_{tide} = -k \cdot e \cdot \frac{1}{(1-e)^3}$$
 
 This term creates a sharp drag effect at periastron (as $e \to 1$), damping the Kozai cycles and "detuning" the resonance.
