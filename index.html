@@ -3,25 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lidov-Kozai Mechanism Simulator</title>
+    <title>Lidov-Kozai with Tidal Friction</title>
     
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
-    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
-    <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
     <style>
         body { margin: 0; overflow: hidden; background-color: #0f172a; }
-        /* Custom scrollbar for webkit */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #1e293b; }
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
@@ -32,9 +27,9 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef, useMemo } = React;
+        const { useState, useEffect, useRef } = React;
 
-        // --- ICONS (Inline SVGs to avoid dependency issues) ---
+        // --- ICONS ---
         const IconPlay = ({ size = 24, className }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
@@ -56,8 +51,7 @@
         const IconInfo = ({ size = 24, className }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
                 <circle cx="12" cy="12" r="10"></circle>
-                <line x1="12" y1="16" x2="12" y2="12"></line>
-                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                <line x1="12" y1="16" x2="12" y2="12"></line>                <line x1="12" y1="8" x2="12.01" y2="8"></line>
             </svg>
         );
         const IconFastForward = ({ size = 24, className }) => (
@@ -66,12 +60,20 @@
                 <polygon points="2 19 11 12 2 5 2 19"></polygon>
             </svg>
         );
+        const IconWave = ({ size = 24, className }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <path d="M2 12s3-7 7-7 7 7 7 7 8-7 8-7"></path>
+                <path d="M2 12s3 7 7 7 7-7 7-7 8 7 8 7" opacity="0.5"></path>
+            </svg>
+        );
 
-        // --- PHYSICS CONSTANTS & HELPERS ---
+        // --- PHYSICS ENGINE ---
         const DEG2RAD = Math.PI / 180;
         const RAD2DEG = 180 / Math.PI;
 
-        const calculateDerivatives = (e, i, omega) => {
+        // Calculates derivatives for RK4 Integration
+        // `tidalStr` parameter
+        const calculateDerivatives = (e, i, omega, tidalStr) => {
             const e2 = e * e;
             const sin2w = Math.sin(2 * omega);
             const sin2i = Math.sin(2 * i);
@@ -79,19 +81,34 @@
             const sinSqW = Math.sin(omega) * Math.sin(omega);
             const sqrtOneMinusE2 = Math.sqrt(1 - e2);
 
-            const epsilon = 0.05; 
+            const epsilon = 0.05; // Strength of Quadrupole perturbation
 
-            // Secular equations (Quadrupole order)
-            const dedt = epsilon * (5/2) * e * sqrtOneMinusE2 * sinSqI * sin2w;
-            const didt = -epsilon * (5/2) * (e2 / sqrtOneMinusE2) * Math.sin(2*i) * sin2w;
+            // 1. Kozai-Lidov Terms (Conservative)
+            const dedt_kozai = epsilon * (5/2) * e * sqrtOneMinusE2 * sinSqI * sin2w;
+            const didt_kozai = -epsilon * (5/2) * (e2 / sqrtOneMinusE2) * Math.sin(2*i) * sin2w;
             
             const term1 = 2 * (1 - e2);
             const term2 = 5 * sinSqW * (e2 - sinSqI);
             const domegadt = (epsilon / sqrtOneMinusE2) * (term1 + term2);
-
             const dOmegadt = -(epsilon / sqrtOneMinusE2) * Math.cos(i) * (3 + 5 * (e2 - sinSqW));
 
-            return { dedt, didt, domegadt, dOmegadt };
+            // 2. Tidal Friction Terms (Dissipative)
+            // Model: Friction increases drastically as planet gets closer (high e)
+            // We model this as a drag on eccentricity.
+            // Formula approximation: de/dt_tide ~ - e / (1-e)^N 
+            // We use (1-e)^3 to make it very sharp near e=1
+            const safeE = Math.min(e, 0.99); // Prevent division by zero
+            const periapseEffect = 1 / (Math.pow(1 - safeE, 3) + 0.01);
+            
+            // tidalStr is the slider value (0.0 to 0.1)
+            const dedt_tide = -tidalStr * e * periapseEffect;
+
+            return { 
+                dedt: dedt_kozai + dedt_tide, 
+                didt: didt_kozai, 
+                domegadt, 
+                dOmegadt 
+            };
         };
 
         // --- CHART COMPONENT ---
@@ -138,19 +155,23 @@
             const mountRef = useRef(null);
             const [isPlaying, setIsPlaying] = useState(false);
             const [simSpeed, setSimSpeed] = useState(0.05);
-            // We use a ref for the loop to access current speed without closure staleness
-            const simSpeedRef = useRef(0.05);
-
+            
+            // Params
             const [params, setParams] = useState({
-                inclination: 60,
+                inclination: 65, // High initial inclination for strong Kozai
                 eccentricity: 0.01,
-                omega: 45
+                omega: 45,
+                tidalStrength: 0.00
             });
             
+            // Use ref for params to access in animation loop without stale closures
+            const paramsRef = useRef(params);
+            useEffect(() => { paramsRef.current = params; }, [params]);
+
             // Physics State
             const physRef = useRef({
                 e: 0.01,
-                i: 60 * DEG2RAD,
+                i: 65 * DEG2RAD,
                 omega: 45 * DEG2RAD,
                 Omega: 0,
                 time: 0
@@ -167,6 +188,7 @@
             const rendererRef = useRef(null);
             const cameraRef = useRef(null);
             const reqRef = useRef(null);
+            const controlsRef = useRef(null);
             
             const resetSimulation = () => {
                 physRef.current = {
@@ -188,10 +210,8 @@
                 historyRef.current = [initialData];
             };
 
-            // Update ref when state changes
-            useEffect(() => {
-                simSpeedRef.current = simSpeed;
-            }, [simSpeed]);
+            const simSpeedRef = useRef(0.05);
+            useEffect(() => { simSpeedRef.current = simSpeed; }, [simSpeed]);
 
             useEffect(() => {
                 if (!mountRef.current) return;
@@ -199,7 +219,7 @@
                 const WIDTH = mountRef.current.clientWidth;
                 const HEIGHT = mountRef.current.clientHeight;
 
-                // Scene Setup
+                // Scene
                 const scene = new THREE.Scene();
                 scene.background = new THREE.Color(0x0f172a);
                 scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
@@ -220,6 +240,7 @@
                 const controls = new THREE.OrbitControls(camera, renderer.domElement);
                 controls.enableDamping = true;
                 controls.dampingFactor = 0.05;
+                controlsRef.current = controls;
 
                 // Lighting
                 const ambientLight = new THREE.AmbientLight(0x404040, 2);
@@ -238,7 +259,7 @@
                 const star = new THREE.Mesh(starGeo, starMat);
                 scene.add(star);
 
-                // Perturber Ring (Reference Plane)
+                // Perturber Ring
                 const perturberOrbitGeo = new THREE.RingGeometry(14.8, 15.2, 64);
                 const perturberOrbitMat = new THREE.MeshBasicMaterial({ 
                     color: 0xff4444, 
@@ -250,14 +271,14 @@
                 perturberRing.rotation.x = Math.PI / 2;
                 scene.add(perturberRing);
 
-                // Perturber Object
+                // Perturber Sphere
                 const perturberGeo = new THREE.SphereGeometry(0.8, 16, 16);
                 const perturberMat = new THREE.MeshStandardMaterial({ color: 0xff4444 });
                 const perturber = new THREE.Mesh(perturberGeo, perturberMat);
                 perturber.position.set(15, 0, 0);
                 scene.add(perturber);
 
-                // Inner Orbit Line
+                // Orbit Line
                 const orbitPoints = new Float32Array(200 * 3);
                 const orbitGeo = new THREE.BufferGeometry();
                 orbitGeo.setAttribute('position', new THREE.BufferAttribute(orbitPoints, 3));
@@ -273,7 +294,7 @@
                 planetMeshRef.current = planet;
                 scene.add(planet);
 
-                // Vector Arrow
+                // Lz Vector
                 const dir = new THREE.Vector3(0, 1, 0);
                 const origin = new THREE.Vector3(0, 0, 0);
                 const length = 5;
@@ -283,16 +304,16 @@
                 scene.add(arrowHelper);
 
                 // Grid
-                const gridHelper = new THREE.GridHelper(40, 40, 0x555555, 0x333333);
+                const gridHelper = new THREE.GridHelper(40, 40, 0x64748b, 0x334155);
                 gridHelper.position.y = -5;
                 scene.add(gridHelper);
 
-                // Helper for RK4 Integration
-                const rk4Step = (state, dt) => {
+                // RK4 Integrator Step
+                const rk4Step = (state, dt, tidalStr) => {
                     const { e, i, omega, Omega } = state;
                     
                     // K1
-                    const k1 = calculateDerivatives(e, i, omega);
+                    const k1 = calculateDerivatives(e, i, omega, tidalStr);
                     
                     // K2
                     const state2 = {
@@ -300,7 +321,7 @@
                         i: i + k1.didt * dt * 0.5,
                         omega: omega + k1.domegadt * dt * 0.5
                     };
-                    const k2 = calculateDerivatives(state2.e, state2.i, state2.omega);
+                    const k2 = calculateDerivatives(state2.e, state2.i, state2.omega, tidalStr);
 
                     // K3
                     const state3 = {
@@ -308,7 +329,7 @@
                         i: i + k2.didt * dt * 0.5,
                         omega: omega + k2.domegadt * dt * 0.5
                     };
-                    const k3 = calculateDerivatives(state3.e, state3.i, state3.omega);
+                    const k3 = calculateDerivatives(state3.e, state3.i, state3.omega, tidalStr);
 
                     // K4
                     const state4 = {
@@ -316,7 +337,7 @@
                         i: i + k3.didt * dt,
                         omega: omega + k3.domegadt * dt
                     };
-                    const k4 = calculateDerivatives(state4.e, state4.i, state4.omega);
+                    const k4 = calculateDerivatives(state4.e, state4.i, state4.omega, tidalStr);
 
                     return {
                         e: e + (dt / 6) * (k1.dedt + 2 * k2.dedt + 2 * k3.dedt + k4.dedt),
@@ -326,24 +347,24 @@
                     };
                 };
 
-                // Animation Loop
+                // Loop
                 const animate = () => {
                     reqRef.current = requestAnimationFrame(animate);
 
                     if (isPlaying) {
                         const p = physRef.current;
-                        
-                        // Physics Sub-stepping
-                        // We break the total frame time into small, fixed steps for stability (RK4 + small dt)
-                        const totalTimeStep = simSpeedRef.current; // The amount of time to advance this frame
-                        const physicsDt = 0.005; // Fixed small step size
+                        const totalTimeStep = simSpeedRef.current;
+                        const physicsDt = 0.005; 
                         let timeAccumulator = 0;
+
+                        // Grab current tidal strength from ref/state
+                        const currentTide = paramsRef.current.tidalStrength;
 
                         while (timeAccumulator < totalTimeStep) {
                             const step = Math.min(physicsDt, totalTimeStep - timeAccumulator);
                             
-                            // Perform RK4 Integration
-                            const nextState = rk4Step(p, step);
+                            // Pass tidal strength to integrator
+                            const nextState = rk4Step(p, step, currentTide);
                             
                             p.e = nextState.e;
                             p.i = nextState.i;
@@ -358,7 +379,7 @@
                             if (p.e > 0.99) p.e = 0.99;
                         }
 
-                        // Throttle history updates for performance
+                        // Chart updates
                         if (Math.floor(p.time * 10) % 5 === 0) {
                             const newData = {
                                 e: p.e,
@@ -372,16 +393,18 @@
                     }
 
                     updateOrbitGeometry();
-                    controls.update();
+                    controlsRef.current.update();
                     renderer.render(scene, camera);
                 };
 
                 const updateOrbitGeometry = () => {
                     const p = physRef.current;
                     const positions = orbitLine.geometry.attributes.position.array;
-                    const a = 8;
+                    
+                    // Fixed semi-major axis for visualization simplicity 
+                    const a = 8; 
 
-                    // Update Vector
+                    // Update Lz Vector
                     const nx = Math.sin(p.i) * Math.sin(p.Omega);
                     const ny = Math.cos(p.i);
                     const nz = -Math.sin(p.i) * Math.cos(p.Omega);
@@ -390,7 +413,7 @@
                     const L_mag = Math.sqrt(1 - p.e * p.e);
                     vectorRef.current.setLength(5 * L_mag);
 
-                    // Update Ellipse
+                    // Re-calculate Ellipse Points
                     for (let j = 0; j < 200; j++) {
                         const theta = (j / 199) * 2 * Math.PI;
                         const r = (a * (1 - p.e * p.e)) / (1 + p.e * Math.cos(theta));
@@ -401,12 +424,12 @@
                         const Z = r * (Math.sin(p.i) * Math.sin(wf));
 
                         positions[j * 3] = X;
-                        positions[j * 3 + 1] = Z; // ThreeJS Y
-                        positions[j * 3 + 2] = Y; // ThreeJS Z
+                        positions[j * 3 + 1] = Z; 
+                        positions[j * 3 + 2] = Y; 
                     }
                     orbitLine.geometry.attributes.position.needsUpdate = true;
 
-                    // Update Planet Marker
+                    // Update Planet Position
                     const vizTheta = (Date.now() * 0.002) % (2 * Math.PI);
                     const r_viz = (a * (1 - p.e * p.e)) / (1 + p.e * Math.cos(vizTheta));
                     const wf_viz = vizTheta + p.omega;
@@ -415,6 +438,14 @@
                     const pZ = r_viz * (Math.sin(p.i) * Math.sin(wf_viz));
                     
                     planetMeshRef.current.position.set(pX, pZ, pY);
+                    
+                    // Visual cue for high tide
+                    if (paramsRef.current.tidalStrength > 0.005) {
+                         planetMeshRef.current.material.emissive.setHex(0xffffff);
+                         planetMeshRef.current.material.emissiveIntensity = p.e; // Glow more at high e
+                    } else {
+                         planetMeshRef.current.material.emissive.setHex(0x000000);
+                    }
                 };
 
                 animate();
@@ -435,15 +466,17 @@
                     if (mountRef.current && renderer.domElement) {
                         mountRef.current.removeChild(renderer.domElement);
                     }
-                    controls.dispose();
                     renderer.dispose();
+                    if(controlsRef.current) controlsRef.current.dispose();
                     starGeo.dispose(); starMat.dispose();
                 };
-            }, [isPlaying]);
+            }, [isPlaying]); // Re-init on simple play toggle not needed strictly but kept for safety
 
+            // Only reset physics if inclination/e/omega sliders change, NOT tidal slider
+            // turn on tides mid-simulation
             useEffect(() => {
                 resetSimulation();
-            }, [params]);
+            }, [params.inclination, params.eccentricity, params.omega]);
 
             return (
                 <div className="w-full h-screen bg-slate-950 text-slate-100 font-sans flex flex-col-reverse md:flex-row overflow-hidden">
@@ -455,7 +488,7 @@
                                 Lidov-Kozai Mechanism
                             </h1>
                             <p className="text-xs text-slate-400 mt-1">
-                                Hierarchical Triple System Simulator
+                                + Tidal Friction Simulator
                             </p>
                         </div>
 
@@ -472,7 +505,7 @@
                                         type="range" 
                                         min="0" max="90" step="0.1"
                                         value={params.inclination}
-                                        onChange={(e) => setParams({...params, inclination: parseFloat(e.target.value)})}
+                                        onChange={(e) => setParams(p => ({...p, inclination: parseFloat(e.target.value)}))}
                                         className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-sky-500"
                                     />
                                     <div className="text-xs text-slate-500 mt-1">
@@ -489,15 +522,35 @@
                                         type="range" 
                                         min="0.01" max="0.8" step="0.01"
                                         value={params.eccentricity}
-                                        onChange={(e) => setParams({...params, eccentricity: parseFloat(e.target.value)})}
+                                        onChange={(e) => setParams(p => ({...p, eccentricity: parseFloat(e.target.value)}))}
                                         className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-500"
                                     />
                                 </label>
 
-                                <label className="block pt-2 border-t border-slate-700">
+                                {/*  Tidal Slider */}
+                                <label className="block pt-4 border-t border-slate-700">
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="text-pink-300 flex items-center font-bold">
+                                            <IconWave size={14} className="mr-2"/> Tidal Strength
+                                        </span>
+                                        <span className="font-mono text-pink-400">{params.tidalStrength > 0 ? (params.tidalStrength * 1000).toFixed(1) : "OFF"}</span>
+                                    </div>
+                                    <input 
+                                        type="range" 
+                                        min="0" max="0.02" step="0.001"
+                                        value={params.tidalStrength}
+                                        onChange={(e) => setParams(p => ({...p, tidalStrength: parseFloat(e.target.value)}))}
+                                        className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                                    />
+                                    <div className="text-xs text-slate-400 mt-2 leading-tight">
+                                        Simulates energy loss at periapsis. Damps eccentricity and kills Kozai cycles.
+                                    </div>
+                                </label>
+
+                                <label className="block pt-2">
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="text-slate-300 flex items-center">
-                                            <IconFastForward size={14} className="mr-1"/> Simulation Speed
+                                            <IconFastForward size={14} className="mr-1"/> Sim Speed
                                         </span>
                                         <span className="font-mono text-amber-400">{simSpeed.toFixed(2)}</span>
                                     </div>
@@ -537,33 +590,34 @@
                             {/* Info */}
                             <div className="bg-indigo-900/20 border border-indigo-500/30 p-3 rounded-lg text-sm text-indigo-200">
                                 <div className="flex items-center mb-2 font-semibold">
-                                    <IconInfo className="mr-2"/> Conservation Law
+                                    <IconInfo className="mr-2"/> Physics Note
                                 </div>
-                                The vertical component of angular momentum (Lz) is conserved:
-                                <div className="my-2 font-mono text-center bg-black/20 p-2 rounded text-xs">
-                                    L_z = √(1 - e²) cos(i) ≈ const
+                                <div className="text-xs opacity-80 mb-2">
+                                    With <strong>Tides OFF</strong>, Lz is conserved and the orbit oscillates forever.
                                 </div>
-                                When inclination (i) decreases, eccentricity (e) must increase to compensate.
+                                <div className="text-xs opacity-80">
+                                    With <strong>Tides ON</strong>, energy is lost at periapsis (high e). This circularizes the orbit and eventually stops the Kozai cycles.
+                                </div>
                             </div>
+                        </div>
 
-                            {/* Graphs */}
-                            <div className="pt-4 border-t border-slate-800 space-y-2">
-                                <h3 className="text-xs font-bold text-slate-500 uppercase">Live Data</h3>
-                                <RealtimeChart 
-                                    data={history} 
-                                    dataKey="e" 
-                                    color="#34d399" 
-                                    label="Eccentricity (e)"
-                                    min={0} max={1}
-                                />
-                                <RealtimeChart 
-                                    data={history} 
-                                    dataKey="i" 
-                                    color="#38bdf8" 
-                                    label="Inclination (deg)"
-                                    min={0} max={90}
-                                />
-                            </div>
+                        {/* Graphs */}
+                        <div className="pt-4 border-t border-slate-800 space-y-2">
+                            <h3 className="text-xs font-bold text-slate-500 uppercase">Live Data</h3>
+                            <RealtimeChart 
+                                data={history} 
+                                dataKey="e" 
+                                color="#34d399" 
+                                label="Eccentricity (e)"
+                                min={0} max={1}
+                            />
+                            <RealtimeChart 
+                                data={history} 
+                                dataKey="i" 
+                                color="#38bdf8" 
+                                label="Inclination (deg)"
+                                min={0} max={90}
+                            />
                         </div>
                     </div>
 
@@ -586,7 +640,7 @@
                             </div>
                             <div className="flex items-center space-x-2">
                                 <span className="text-2xl text-emerald-400 font-bold">↑</span>
-                                <span className="text-xs text-emerald-200 font-mono">Angular Momentum Vector</span>
+                                <span className="text-xs text-emerald-200 font-mono">Angular Momentum</span>
                             </div>
                         </div>
 
