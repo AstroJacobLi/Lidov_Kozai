@@ -384,7 +384,7 @@
                     // Update Vector
                     const nx = Math.sin(p.i) * Math.sin(p.Omega);
                     const ny = Math.cos(p.i);
-                    const nz = Math.sin(p.i) * Math.cos(p.Omega);
+                    const nz = -Math.sin(p.i) * Math.cos(p.Omega);
                     
                     vectorRef.current.setDirection(new THREE.Vector3(nx, ny, nz).normalize());
                     const L_mag = Math.sqrt(1 - p.e * p.e);
