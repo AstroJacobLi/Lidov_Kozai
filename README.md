@@ -19,7 +19,7 @@ The simulation solves the secular equations of motion (up to quadrupole order) u
 
 Since this project uses CDN links for all dependencies, no build step or installation is required.
 
-1.  Simply download the `kozai.html` file.
+1.  Simply download the `index.html` file.
 2.  Open it in any modern web browser (Chrome, Firefox, Safari, Edge).
 
 ## Dependencies
