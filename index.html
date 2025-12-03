@@ -436,7 +436,7 @@
                     orbitLine.geometry.attributes.position.needsUpdate = true;
 
                     // Update Planet Position
-                    const vizTheta = (Date.now() * 0.002) % (2 * Math.PI);
+                    const vizTheta = (Date.now() * 0.008) % (2 * Math.PI);
                     const r_viz = (a * (1 - p.e * p.e)) / (1 + p.e * Math.cos(vizTheta));
                     const wf_viz = vizTheta + p.omega;
                     const pX = r_viz * (Math.cos(p.Omega) * Math.cos(wf_viz) - Math.sin(p.Omega) * Math.sin(wf_viz) * Math.cos(p.i));
