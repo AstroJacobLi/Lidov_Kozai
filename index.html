@@ -482,7 +482,7 @@
                 <div className="w-full h-screen bg-slate-950 text-slate-100 font-sans flex flex-col-reverse md:flex-row overflow-hidden">
                     
                     {/* SIDEBAR CONTROLS */}
-                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col h-1/2 md:h-full z-10 shadow-xl">
+                    <div className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col h-3/5 md:h-full z-10 shadow-xl">
                         <div className="p-4 border-b border-slate-800 bg-slate-800/50">
                             <h1 className="text-lg font-bold bg-gradient-to-r from-sky-400 to-indigo-400 bg-clip-text text-transparent">
                                 Lidov-Kozai Mechanism
@@ -593,7 +593,7 @@
                                     <IconInfo className="mr-2"/> Physics Note
                                 </div>
                                 <div className="text-xs opacity-80 mb-2">
-                                    With <strong>Tides OFF</strong>, Lz is conserved and the orbit oscillates forever.
+                                    With <strong>Tides OFF</strong>,  <div className="my-2 font-mono text-center bg-black/20 p-2 rounded text-xs">L_z = √(1 - e²) cos(i) ≈ const</div> is conserved and the orbit oscillates forever.
                                 </div>
                                 <div className="text-xs opacity-80">
                                     With <strong>Tides ON</strong>, energy is lost at periapsis (high e). This circularizes the orbit and eventually stops the Kozai cycles.
