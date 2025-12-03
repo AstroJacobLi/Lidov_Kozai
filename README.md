@@ -8,14 +8,13 @@ A web-based interactive simulator for the Lidov-Kozai mechanism, a dynamical phe
 
 This application visualizes the secular evolution of a hierarchical triple system. It demonstrates how a distant perturber can induce periodic oscillations in the inclination and eccentricity of an inner binary's orbit.
 
-The simulation solves the secular equations of motion (up to quadrupole order) using a 4th-order Runge-Kutta (RK4) integrator and renders the system in 3D using Three.js.
+The simulation solves the secular equations of motion (up to quadrupole order) using a 4th-order Runge-Kutta (RK4) integrator and renders the system in 3D using `Three.js`.
 
 ## Features
 
 -   **Interactive 3D Visualization**: View the inner binary's orbit, the angular momentum vector, and the perturber in a fully navigable 3D space.
--   **Real-time Controls**: Adjust initial inclination ($i_0$), eccentricity ($e_0$), and simulation speed on the fly.
+-   **Real-time Controls**: Adjust initial inclination ($i_0$), eccentricity ($e_0$), tidal friction strength ($\eta$), and simulation speed on the fly.
 -   **Live Data Plotting**: Monitor the evolution of eccentricity and inclination over time to observe the anti-correlated oscillations.
--   **Physics Validation**: Displays the conservation of the vertical component of angular momentum ($L_z = \sqrt{1-e^2} \cos i$).
 
 ## Usage
 
@@ -44,4 +43,6 @@ To simulate tidal circularization, an ad-hoc dissipative term is added to the ec
 
 $$\left(\frac{de}{dt}\right)_{tide} = -k \cdot e \cdot \frac{1}{(1-e)^3}$$
 
-This term creates a sharp drag effect at periastron (as $e \to 1$), damping the Kozai cycles and "detuning" the resonance.
+This term creates a sharp drag effect at periastron (as $e \to 1$), damping the Kozai cycles and "detuning" the resonance. 
+
+We do not consider general relativity or octupole order effects in this simulation.
