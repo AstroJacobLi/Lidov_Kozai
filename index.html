@@ -13,7 +13,7 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     
     <style>
         body { margin: 0; overflow: hidden; background-color: #0f172a; }
@@ -62,8 +62,12 @@
         );
         const IconWave = ({ size = 24, className }) => (
             <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-                <path d="M2 12s3-7 7-7 7 7 7 7 8-7 8-7"></path>
-                <path d="M2 12s3 7 7 7 7-7 7-7 8 7 8 7" opacity="0.5"></path>
+                <path d="M2 12s3-7 7-7 7 7 7 7 8-7 8-7"></path><path d="M2 12s3 7 7 7 7-7 7-7 8 7 8 7" opacity="0.5"></path>
+            </svg>
+        );
+        const IconStar = ({ size = 24, className }) => (
+            <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
             </svg>
         );
 
@@ -83,9 +87,16 @@
         const DEG2RAD = Math.PI / 180;
         const RAD2DEG = 180 / Math.PI;
 
-        // Calculates derivatives for RK4 Integration
-        // `tidalStr` parameter
-        const calculateDerivatives = (e, i, omega, tidalStr) => {
+        const solveKepler = (M, e) => {
+            let E = M;
+            for (let i = 0; i < 5; i++) {
+                E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+            }
+            return E;
+        };
+
+        // --- calculate derivatives for dadt ---
+        const calculateDerivatives = (e, i, omega, a, tidalStr, stellarType) => {
             const e2 = e * e;
             const sin2w = Math.sin(2 * omega);
             const sin2i = Math.sin(2 * i);
@@ -93,9 +104,9 @@
             const sinSqW = Math.sin(omega) * Math.sin(omega);
             const sqrtOneMinusE2 = Math.sqrt(1 - e2);
 
-            const epsilon = 0.05; // Strength of Quadrupole perturbation
+            const epsilon = 0.05; 
 
-            // 1. Kozai-Lidov Terms (Conservative)
+            // 1. Kozai-Lidov Terms
             const dedt_kozai = epsilon * (5/2) * e * sqrtOneMinusE2 * sinSqI * sin2w;
             const didt_kozai = -epsilon * (5/2) * (e2 / sqrtOneMinusE2) * Math.sin(2*i) * sin2w;
             
@@ -104,22 +115,26 @@
             const domegadt = (epsilon / sqrtOneMinusE2) * (term1 + term2);
             const dOmegadt = -(epsilon / sqrtOneMinusE2) * Math.cos(i) * (3 + 5 * (e2 - sinSqW));
 
-            // 2. Tidal Friction Terms (Dissipative)
-            // Model: Friction increases drastically as planet gets closer (high e)
-            // We model this as a drag on eccentricity.
-            // Formula approximation: de/dt_tide ~ - e / (1-e)^N 
-            // We use (1-e)^3 to make it very sharp near e=1
-            const safeE = Math.min(e, 0.99); // Prevent division by zero
+            // 2. Tidal Friction Terms
+            const safeE = Math.min(e, 0.99); 
             const periapseEffect = 1 / (Math.pow(1 - safeE, 3) + 0.01);
             
-            // tidalStr is the slider value (0.0 to 0.1)
             const dedt_tide = -tidalStr * e * periapseEffect;
+
+            // --- dadt (orbital decay) ---
+            // Formula derived from conservation of Angular Momentum at periapse
+            const dadt_tide = dedt_tide * ( (2 * a * safeE) / (1 - safeE*safeE) );
+
+            // 3. Kraft Break
+            const stellarDamping = (stellarType === 'cool') ? 0.02 : 0.00;
+            const didt_stellar = -stellarDamping * Math.sin(i);
 
             return { 
                 dedt: dedt_kozai + dedt_tide, 
-                didt: didt_kozai, 
+                didt: didt_kozai + didt_stellar,
                 domegadt, 
-                dOmegadt 
+                dOmegadt,
+                dadt: dadt_tide // Return shrinking rate
             };
         };
 
@@ -133,18 +148,22 @@
                 const points = data.map((pt, idx) => {
                     const x = (idx / (data.length - 1)) * width;
                     const val = pt[dataKey];
-                    const normalizedVal = (val - min) / (max - min);
+                    // Dynamic Max if not provided (useful for 'a')
+                    const effectiveMax = max !== undefined ? max : (Math.max(...data.map(d => d[dataKey])) + 0.5);
+                    const normalizedVal = (val - min) / (effectiveMax - min);
                     const y = height - (normalizedVal * height);
                     return `${x},${y}`;
                 });
                 return points.join(" ");
             };
 
+            const currentVal = data.length > 0 ? data[data.length-1][dataKey] : 0;
+
             return (
                 <div className="flex flex-col bg-slate-900/50 p-2 rounded border border-slate-700">
                     <div className="flex justify-between text-xs mb-1 font-mono text-slate-300">
                         <span style={{ color }}>{label}</span>
-                        <span>{data.length > 0 ? data[data.length-1][dataKey].toFixed(2) : 0}</span>
+                        <span>{currentVal.toFixed(2)}</span>
                     </div>
                     <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-16 overflow-visible">
                         <line x1="0" y1="0" x2={width} y2="0" stroke="#334155" strokeWidth="0.5" />
@@ -168,21 +187,21 @@
             const [isPlaying, setIsPlaying] = useState(false);
             const [simSpeed, setSimSpeed] = useState(0.05);
             
-            // Params
             const [params, setParams] = useState({
-                inclination: 65, // High initial inclination for strong Kozai
+                inclination: 65, 
                 eccentricity: 0.01,
                 omega: 45,
                 tidalStrength: 0.00,
+                stellarType: 'hot',
                 isPhysicsNoteOpen: true
             });
             
-            // Use ref for params to access in animation loop without stale closures
             const paramsRef = useRef(params);
             useEffect(() => { paramsRef.current = params; }, [params]);
 
-            // Physics State
+            // ---  'a' to physical state ---
             const physRef = useRef({
+                a: 10,
                 e: 0.01,
                 i: 65 * DEG2RAD,
                 omega: 45 * DEG2RAD,
@@ -193,11 +212,11 @@
             const [history, setHistory] = useState([]);
             const historyRef = useRef([]);
 
-            // Three.js Refs
             const sceneRef = useRef(null);
             const orbitLineRef = useRef(null);
             const vectorRef = useRef(null);
             const planetMeshRef = useRef(null);
+            const starMeshRef = useRef(null); 
             const rendererRef = useRef(null);
             const cameraRef = useRef(null);
             const reqRef = useRef(null);
@@ -205,6 +224,7 @@
             
             const resetSimulation = () => {
                 physRef.current = {
+                    a: 10, // Reset 'a'
                     e: params.eccentricity,
                     i: params.inclination * DEG2RAD,
                     omega: params.omega * DEG2RAD,
@@ -217,7 +237,7 @@
                 const initialData = {
                     e: params.eccentricity,
                     i: params.inclination,
-                    lz: Math.sqrt(1 - params.eccentricity**2) * Math.cos(params.inclination * DEG2RAD)
+                    a: 10
                 };
                 setHistory([initialData]);
                 historyRef.current = [initialData];
@@ -232,7 +252,6 @@
                 const WIDTH = mountRef.current.clientWidth;
                 const HEIGHT = mountRef.current.clientHeight;
 
-                // Scene
                 const scene = new THREE.Scene();
                 scene.background = new THREE.Color(0x0f172a);
                 scene.fog = new THREE.FogExp2(0x0f172a, 0.02);
@@ -249,20 +268,17 @@
                 mountRef.current.appendChild(renderer.domElement);
                 rendererRef.current = renderer;
 
-                // Controls
                 const controls = new THREE.OrbitControls(camera, renderer.domElement);
                 controls.enableDamping = true;
                 controls.dampingFactor = 0.05;
                 controlsRef.current = controls;
 
-                // Lighting
                 const ambientLight = new THREE.AmbientLight(0x404040, 2);
                 scene.add(ambientLight);
                 const pointLight = new THREE.PointLight(0xffffff, 2, 100);
                 pointLight.position.set(0, 0, 0);
                 scene.add(pointLight);
 
-                // Star
                 const starGeo = new THREE.SphereGeometry(1, 32, 32);
                 const starMat = new THREE.MeshStandardMaterial({ 
                     color: 0xffdd00, 
@@ -270,9 +286,9 @@
                     emissiveIntensity: 0.5 
                 });
                 const star = new THREE.Mesh(starGeo, starMat);
+                starMeshRef.current = star; 
                 scene.add(star);
 
-                // Perturber Ring
                 const perturberOrbitGeo = new THREE.RingGeometry(14.8, 15.2, 64);
                 const perturberOrbitMat = new THREE.MeshBasicMaterial({ 
                     color: 0xff4444, 
@@ -284,14 +300,12 @@
                 perturberRing.rotation.x = Math.PI / 2;
                 scene.add(perturberRing);
 
-                // Perturber Sphere
                 const perturberGeo = new THREE.SphereGeometry(0.8, 16, 16);
                 const perturberMat = new THREE.MeshStandardMaterial({ color: 0xff4444 });
                 const perturber = new THREE.Mesh(perturberGeo, perturberMat);
                 perturber.position.set(15, 0, 0);
                 scene.add(perturber);
 
-                // Orbit Line
                 const orbitPoints = new Float32Array(200 * 3);
                 const orbitGeo = new THREE.BufferGeometry();
                 orbitGeo.setAttribute('position', new THREE.BufferAttribute(orbitPoints, 3));
@@ -300,14 +314,12 @@
                 orbitLineRef.current = orbitLine;
                 scene.add(orbitLine);
 
-                // Planet
                 const planetGeo = new THREE.SphereGeometry(0.4, 16, 16);
                 const planetMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8 });
                 const planet = new THREE.Mesh(planetGeo, planetMat);
                 planetMeshRef.current = planet;
                 scene.add(planet);
 
-                // Lz Vector
                 const dir = new THREE.Vector3(0, 1, 0);
                 const origin = new THREE.Vector3(0, 0, 0);
                 const length = 5;
@@ -316,51 +328,51 @@
                 vectorRef.current = arrowHelper;
                 scene.add(arrowHelper);
 
-                // Grid
                 const gridHelper = new THREE.GridHelper(40, 40, 0x64748b, 0x334155);
                 gridHelper.position.y = -5;
                 scene.add(gridHelper);
 
-                // RK4 Integrator Step
-                const rk4Step = (state, dt, tidalStr) => {
-                    const { e, i, omega, Omega } = state;
+                // ---  RK4 Step tracks 'a' ---
+                const rk4Step = (state, dt, tidalStr, stellarType) => {
+                    // Extract 'a'
+                    const { e, i, omega, Omega, a } = state;
                     
-                    // K1
-                    const k1 = calculateDerivatives(e, i, omega, tidalStr);
+                    // Pass 'a' to all derivatives
+                    const k1 = calculateDerivatives(e, i, omega, a, tidalStr, stellarType);
                     
-                    // K2
                     const state2 = {
                         e: e + k1.dedt * dt * 0.5,
                         i: i + k1.didt * dt * 0.5,
-                        omega: omega + k1.domegadt * dt * 0.5
+                        omega: omega + k1.domegadt * dt * 0.5,
+                        a: a + k1.dadt * dt * 0.5
                     };
-                    const k2 = calculateDerivatives(state2.e, state2.i, state2.omega, tidalStr);
+                    const k2 = calculateDerivatives(state2.e, state2.i, state2.omega, state2.a, tidalStr, stellarType);
 
-                    // K3
                     const state3 = {
                         e: e + k2.dedt * dt * 0.5,
                         i: i + k2.didt * dt * 0.5,
-                        omega: omega + k2.domegadt * dt * 0.5
+                        omega: omega + k2.domegadt * dt * 0.5,
+                        a: a + k2.dadt * dt * 0.5
                     };
-                    const k3 = calculateDerivatives(state3.e, state3.i, state3.omega, tidalStr);
+                    const k3 = calculateDerivatives(state3.e, state3.i, state3.omega, state3.a, tidalStr, stellarType);
 
-                    // K4
                     const state4 = {
                         e: e + k3.dedt * dt,
                         i: i + k3.didt * dt,
-                        omega: omega + k3.domegadt * dt
+                        omega: omega + k3.domegadt * dt,
+                        a: a + k3.dadt * dt
                     };
-                    const k4 = calculateDerivatives(state4.e, state4.i, state4.omega, tidalStr);
+                    const k4 = calculateDerivatives(state4.e, state4.i, state4.omega, state4.a, tidalStr, stellarType);
 
                     return {
                         e: e + (dt / 6) * (k1.dedt + 2 * k2.dedt + 2 * k3.dedt + k4.dedt),
                         i: i + (dt / 6) * (k1.didt + 2 * k2.didt + 2 * k3.didt + k4.didt),
                         omega: omega + (dt / 6) * (k1.domegadt + 2 * k2.domegadt + 2 * k3.domegadt + k4.domegadt),
-                        Omega: Omega + (dt / 6) * (k1.dOmegadt + 2 * k2.dOmegadt + 2 * k3.dOmegadt + k4.dOmegadt)
+                        Omega: Omega + (dt / 6) * (k1.dOmegadt + 2 * k2.dOmegadt + 2 * k3.dOmegadt + k4.dOmegadt),
+                        a: a + (dt / 6) * (k1.dadt + 2 * k2.dadt + 2 * k3.dadt + k4.dadt)
                     };
                 };
 
-                // Loop
                 const animate = () => {
                     reqRef.current = requestAnimationFrame(animate);
 
@@ -370,34 +382,33 @@
                         const physicsDt = 0.005; 
                         let timeAccumulator = 0;
 
-                        // Grab current tidal strength from ref/state
                         const currentTide = paramsRef.current.tidalStrength;
+                        const currentStar = paramsRef.current.stellarType;
 
                         while (timeAccumulator < totalTimeStep) {
                             const step = Math.min(physicsDt, totalTimeStep - timeAccumulator);
                             
-                            // Pass tidal strength to integrator
-                            const nextState = rk4Step(p, step, currentTide);
+                            const nextState = rk4Step(p, step, currentTide, currentStar);
                             
                             p.e = nextState.e;
                             p.i = nextState.i;
                             p.omega = nextState.omega;
                             p.Omega = nextState.Omega;
+                            p.a = nextState.a; // Update 'a'
                             p.time += step;
                             
                             timeAccumulator += step;
 
-                            // Safety clamps
                             if (p.e < 0.001) p.e = 0.001;
                             if (p.e > 0.99) p.e = 0.99;
+                            if (p.a < 0.5) p.a = 0.5; // Prevent singularity
                         }
 
-                        // Chart updates
                         if (Math.floor(p.time * 10) % 5 === 0) {
                             const newData = {
                                 e: p.e,
                                 i: p.i * RAD2DEG,
-                                lz: Math.sqrt(1 - p.e**2) * Math.cos(p.i)
+                                a: p.a
                             };
                             historyRef.current.push(newData);
                             if (historyRef.current.length > 200) historyRef.current.shift();
@@ -414,10 +425,19 @@
                     const p = physRef.current;
                     const positions = orbitLine.geometry.attributes.position.array;
                     
-                    // Fixed semi-major axis for visualization simplicity 
-                    const a = 8; 
+                    // ---  Use dynamic 'a' for visuals ---
+                    const a = p.a; 
 
-                    // Update Lz Vector
+                    if (starMeshRef.current) {
+                        if (paramsRef.current.stellarType === 'hot') {
+                            starMeshRef.current.material.color.setHex(0xaaddff); 
+                            starMeshRef.current.material.emissive.setHex(0x0044aa);
+                        } else {
+                            starMeshRef.current.material.color.setHex(0xffdd00); 
+                            starMeshRef.current.material.emissive.setHex(0xffaa00);
+                        }
+                    }
+
                     const nx = Math.sin(p.i) * Math.sin(p.Omega);
                     const ny = Math.cos(p.i);
                     const nz = -Math.sin(p.i) * Math.cos(p.Omega);
@@ -426,7 +446,6 @@
                     const L_mag = Math.sqrt(1 - p.e * p.e);
                     vectorRef.current.setLength(5 * L_mag);
 
-                    // Re-calculate Ellipse Points
                     for (let j = 0; j < 200; j++) {
                         const theta = (j / 199) * 2 * Math.PI;
                         const r = (a * (1 - p.e * p.e)) / (1 + p.e * Math.cos(theta));
@@ -442,20 +461,26 @@
                     }
                     orbitLine.geometry.attributes.position.needsUpdate = true;
 
-                    // Update Planet Position
-                    const vizTheta = (Date.now() * 0.008) % (2 * Math.PI);
-                    const r_viz = (a * (1 - p.e * p.e)) / (1 + p.e * Math.cos(vizTheta));
-                    const wf_viz = vizTheta + p.omega;
-                    const pX = r_viz * (Math.cos(p.Omega) * Math.cos(wf_viz) - Math.sin(p.Omega) * Math.sin(wf_viz) * Math.cos(p.i));
-                    const pY = r_viz * (Math.sin(p.Omega) * Math.cos(wf_viz) + Math.cos(p.Omega) * Math.sin(wf_viz) * Math.cos(p.i));
-                    const pZ = r_viz * (Math.sin(p.i) * Math.sin(wf_viz));
+                    const M = (Date.now() * 0.008) % (2 * Math.PI);
+                    
+                    const E = solveKepler(M, p.e);
+                    
+                    const P = a * (Math.cos(E) - p.e);
+                    const Q = a * Math.sqrt(1 - p.e*p.e) * Math.sin(E);
+                    
+                    const cosOm = Math.cos(p.Omega); const sinOm = Math.sin(p.Omega);
+                    const cosw = Math.cos(p.omega); const sinw = Math.sin(p.omega);
+                    const cosi = Math.cos(p.i); const sini = Math.sin(p.i);
+
+                    const pX = P * (cosOm*cosw - sinOm*sinw*cosi) - Q * (cosOm*sinw + sinOm*cosw*cosi);
+                    const pY = P * (sinOm*cosw + cosOm*sinw*cosi) - Q * (sinOm*sinw - cosOm*cosw*cosi);
+                    const pZ = P * (sinw*sini) + Q * (cosw*sini);
                     
                     planetMeshRef.current.position.set(pX, pZ, pY);
                     
-                    // Visual cue for high tide
                     if (paramsRef.current.tidalStrength > 0.005) {
                          planetMeshRef.current.material.emissive.setHex(0xffffff);
-                         planetMeshRef.current.material.emissiveIntensity = p.e; // Glow more at high e
+                         planetMeshRef.current.material.emissiveIntensity = p.e; 
                     } else {
                          planetMeshRef.current.material.emissive.setHex(0x000000);
                     }
@@ -481,17 +506,13 @@
                     }
                     renderer.dispose();
                     if(controlsRef.current) controlsRef.current.dispose();
-                    starGeo.dispose(); starMat.dispose();
                 };
-            }, [isPlaying]); // Re-init on simple play toggle not needed strictly but kept for safety
+            }, [isPlaying]); 
 
-            // Only reset physics if inclination/e/omega sliders change, NOT tidal slider
-            // turn on tides mid-simulation
             useEffect(() => {
                 resetSimulation();
             }, [params.inclination, params.eccentricity, params.omega]);
 
-            // Sidebar Resize Logic
             const [sidebarWidth, setSidebarWidth] = useState(320);
             const [isResizing, setIsResizing] = useState(false);
             const [isDesktop, setIsDesktop] = useState(window.innerWidth >= 768);
@@ -525,7 +546,6 @@
             return (
                 <div className="w-full h-screen bg-slate-950 text-slate-100 font-sans flex flex-col-reverse md:flex-row overflow-hidden">
                     
-                    {/* SIDEBAR CONTROLS */}
                     <div 
                         className="w-full bg-slate-900 border-r border-slate-800 flex flex-col h-1/2 md:h-full z-10 shadow-xl flex-shrink-0"
                         style={isDesktop ? { width: sidebarWidth } : {}}
@@ -541,7 +561,6 @@
 
                         <div className="flex-1 overflow-y-auto p-4 space-y-6">
                             
-                            {/* Controls */}
                             <div className="space-y-4">
                                 <label className="block">
                                     <div className="flex justify-between text-sm mb-1">
@@ -574,7 +593,6 @@
                                     />
                                 </label>
 
-                                {/*  Tidal Slider */}
                                 <label className="block pt-4 border-t border-slate-700">
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="text-pink-300 flex items-center font-bold">
@@ -590,9 +608,35 @@
                                         className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
                                     />
                                     <div className="text-xs text-slate-400 mt-2 leading-tight">
-                                        Simulates energy loss at periapsis. Damps eccentricity and kills Kozai cycles.
+                                        Simulates energy loss at periapsis. Damps eccentricity.
                                     </div>
                                 </label>
+
+                                <div className="block pt-2">
+                                    <div className="flex justify-between text-sm mb-2">
+                                        <span className="text-yellow-300 font-bold flex items-center">
+                                            <IconStar size={14} className="mr-2"/> Host Star Type
+                                        </span>
+                                    </div>
+                                    <div className="flex bg-slate-800 rounded p-1">
+                                        <button 
+                                            onClick={() => setParams(p => ({...p, stellarType: 'hot'}))}
+                                            className={`flex-1 py-1 text-xs rounded font-semibold transition-colors ${params.stellarType === 'hot' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                        >
+                                            HOT (Radiative)
+                                        </button>
+                                        <button 
+                                            onClick={() => setParams(p => ({...p, stellarType: 'cool'}))}
+                                            className={`flex-1 py-1 text-xs rounded font-semibold transition-colors ${params.stellarType === 'cool' ? 'bg-yellow-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                        >
+                                            COOL (Convective)
+                                        </button>
+                                    </div>
+                                    <div className="text-xs text-slate-400 mt-2 leading-tight">
+                                        <strong>Cool:</strong> Efficient alignment. Inclination decays.<br/>
+                                        <strong>Hot:</strong> Inefficient. Misalignment survives.
+                                    </div>
+                                </div>
 
                                 <label className="block pt-2 border-t border-slate-700">
                                     <div className="flex justify-between text-sm mb-1">
@@ -611,7 +655,6 @@
                                 </label>
                             </div>
 
-                            {/* Buttons */}
                             <div className="grid grid-cols-2 gap-2">
                                 <button 
                                     onClick={() => setIsPlaying(!isPlaying)}
@@ -634,8 +677,6 @@
                                 </button>
                             </div>
 
-                            {/* Info */}
-                            {/* Info */}
                             <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-lg text-sm text-indigo-200 overflow-hidden">
                                 <button 
                                     onClick={() => setParams(p => ({...p, isPhysicsNoteOpen: !p.isPhysicsNoteOpen}))}
@@ -656,14 +697,13 @@
                                             With <strong>Tides OFF</strong>,  <div className="my-2 font-mono text-center bg-black/20 p-2 rounded text-xs">L_z = √(1 - e²) cos(i) ≈ const</div> is conserved and the orbit oscillates forever.
                                         </div>
                                         <div className="text-xs opacity-80">
-                                            With <strong>Tides ON</strong>, energy is lost at periapsis (high e). This circularizes the orbit and eventually stops the Kozai cycles.
+                                            With <strong>Tides ON</strong>, energy is lost at periapsis (high e). This circularizes the orbit.
                                         </div>
                                     </div>
                                 )}
                             </div>
                         
 
-                        {/* Graphs */}
                         <div className="pt-4 border-t border-slate-800 space-y-2">
                             <h3 className="text-xs font-bold text-slate-500 uppercase">Live Data</h3>
                             <RealtimeChart 
@@ -672,6 +712,14 @@
                                 color="#34d399" 
                                 label="Eccentricity (e)"
                                 min={0} max={1}
+                            />
+                            {/* ---  'a' Chart --- */}
+                            <RealtimeChart 
+                                data={history} 
+                                dataKey="a" 
+                                color="#f472b6" 
+                                label="Semi-Major Axis (a)"
+                                min={0} max={10}
                             />
                             <RealtimeChart 
                                 data={history} 
@@ -683,7 +731,6 @@
                             </div>
                         </div>
 
-                        {/* Footer */}
                         <div className="p-4 border-t border-slate-800 bg-slate-900 text-xs text-slate-500 flex justify-between items-center">
                             <span>By Jiaxuan Li & Chris Wang with the help of Gemini 3 pro.</span>
                             <a href="https://github.com/AstroJacobLi/Lidov_Kozai" target="_blank" rel="noopener noreferrer" className="text-slate-400 hover:text-white transition-colors">
@@ -692,7 +739,6 @@
                         </div>
                     </div>
 
-                    {/* RESIZE HANDLE */}
                     {isDesktop && (
                         <div
                             className="w-1 bg-slate-800 hover:bg-sky-500 cursor-col-resize transition-colors z-20 flex-shrink-0"
@@ -700,7 +746,6 @@
                         />
                     )}
 
-                    {/* 3D VIEWPORT */}
                     <div className="flex-1 relative bg-black">
                         <div ref={mountRef} className="w-full h-full cursor-move"></div>
                         
